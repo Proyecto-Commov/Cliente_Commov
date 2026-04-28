@@ -35,54 +35,25 @@
 </head>
 <body>
     <h1>Streaming en Directo</h1>
-    <video id="player" autoplay muted controls></video>
+    <video id="player" autoplay muted></video>
     <div id="status" class="disconnected">Desconectado...</div>
 
     <script>
         const videoElement = document.getElementById('player');
         const statusElement = document.getElementById('status');
         
-        // Configurar JMuxer para reproducir H.264
+        // Configurar JMuxer para reproducir H.264 raw bitstream - ULTRA LOW LATENCY
         const jmuxer = new JMuxer({
             node: videoElement,
             mode: 'video',
-            flushingTime: 1000,  // Aumentado a 1 segundo para mejor buffering y menos rebuffers
-            fps: 30,  // Sincronizar con la captura (30fps)
+            flushingTime: 50,  // Mínimo para flush rápido (casi sin buffering)
+            fps: 30,
             debug: false,
-            buffer: 50  // Aumentar buffer interno
+            buffer: 5  // Absolutamente mínimo para latencia ultra baja
         });
 
-        // Buffer para acumular datos NAL
-        let nalBuffer = new Uint8Array();
-        const START_CODE = [0x00, 0x00, 0x00, 0x01];
-
-        function findNalUnits(data) {
-            const units = [];
-            let start = 0;
-            
-            for (let i = 0; i < data.length - 3; i++) {
-                // Buscar código de inicio de NAL (0x00 0x00 0x00 0x01 o 0x00 0x00 0x01)
-                if (data[i] === 0x00 && data[i+1] === 0x00 && data[i+2] === 0x01) {
-                    if (start < i) {
-                        units.push(data.slice(start, i));
-                    }
-                    start = i;
-                    i += 2;
-                } else if (data[i] === 0x00 && data[i+1] === 0x00 && data[i+2] === 0x00 && data[i+3] === 0x01) {
-                    if (start < i) {
-                        units.push(data.slice(start, i));
-                    }
-                    start = i;
-                    i += 3;
-                }
-            }
-            
-            if (start < data.length) {
-                units.push(data.slice(start));
-            }
-            
-            return units;
-        }
+        // Buffer temporal para acumular datos H.264
+        let videoBuffer = new Uint8Array();
 
         // Conectar al WebSocket
         const socket = new WebSocket('ws://' + window.location.host + '/video');
@@ -95,43 +66,36 @@
 
         socket.onmessage = function(event) {
             try {
+                // Obtener datos H.264 del WebSocket
                 const newData = new Uint8Array(event.data);
                 
                 // Acumular datos en el buffer
-                const combined = new Uint8Array(nalBuffer.length + newData.length);
-                combined.set(nalBuffer);
-                combined.set(newData, nalBuffer.length);
-                nalBuffer = combined;
+                const combined = new Uint8Array(videoBuffer.length + newData.length);
+                combined.set(videoBuffer);
+                combined.set(newData, videoBuffer.length);
+                videoBuffer = combined;
                 
-                // Procesar unidades NAL cuando tengamos datos suficientes (mayor buffer = mejor buffering)
-                if (nalBuffer.length > 2048) {  // Aumentado de 100 a 2048 bytes para mejor acumulación
-                    const units = findNalUnits(nalBuffer);
-                    
-                    // Enviar unidades NAL a JMuxer
-                    if (units.length > 0) {
-                        // Guardar datos incompletos para el próximo mensaje
-                        const lastUnit = nalBuffer.slice(
-                            nalBuffer.lastIndexOf(0x01) + 1
-                        );
-                        
-                        jmuxer.feed({
-                            video: new Uint8Array(nalBuffer.slice(0, nalBuffer.lastIndexOf(0x01)))
-                        });
-                        
-                        nalBuffer = lastUnit;
-                    }
+                // Enviar datos a JMuxer INMEDIATAMENTE cuando haya datos
+                // Esto reduce el lag al máximo - casi latencia en vivo
+                if (videoBuffer.length > 0) {
+                    jmuxer.feed({
+                        video: videoBuffer
+                    });
+                    videoBuffer = new Uint8Array();  // Limpiar buffer completamente
                 }
                 
-                statusElement.textContent = 'Reproduciendo... (Buffer: ' + (nalBuffer.length / 1024).toFixed(1) + ' KB)';
+                statusElement.textContent = 'Reproduciendo en vivo (latencia ultra-baja)...';
                 statusElement.className = 'connected';
                 
             } catch (e) {
                 console.error('Error procesando video:', e);
+                statusElement.textContent = 'Error: ' + e.message;
+                statusElement.className = 'disconnected';
             }
         };
 
         socket.onerror = function(event) {
-            statusElement.textContent = 'Error de conexión';
+            statusElement.textContent = 'Error de conexión WebSocket';
             statusElement.className = 'disconnected';
             console.error('WebSocket error:', event);
         };
