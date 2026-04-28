@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Commov Live Stream</title>
+    <script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
+</head>
+<body style="background: #222; color: white; text-align: center;">
+    <h1>Streaming en Directo</h1>
+    <video id="player" autoplay muted controls style="width: 80%; border: 2px solid #444;"></video>
+
+    <script>
+        const videoElement = document.getElementById('player');
+        const jmuxer = new JMuxer({
+            node: videoElement,
+            mode: 'video',
+            flushingTime: 100,
+            debug: false
+        });
+
+        // Conectar al WebSocket que creamos en Python
+        const socket = new WebSocket('ws://' + window.location.host + '/video');
+        socket.binaryType = 'arraybuffer';
+
+        socket.onmessage = function(event) {
+            // Pasamos los bits recibidos directamente al reproductor
+            jmuxer.feed({
+                video: new Uint8Array(event.data)
+            });
+        };
+    </script>
+</body>
+</html>
